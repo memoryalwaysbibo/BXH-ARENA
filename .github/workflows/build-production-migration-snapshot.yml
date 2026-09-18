@@ -1,0 +1,62 @@
+name: Build Production Migration Snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-production-migration-snapshot.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Production
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone Beta source as read-only input
+        run: git clone --depth 1 https://github.com/memoryalwaysbibo/BXH_ARENA_BETA.git /tmp/beta
+
+      - name: Create isolated migration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B migration/beta-snapshot
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          mkdir -p .github
+          find .github -mindepth 1 -maxdepth 1 ! -name workflows -exec rm -rf {} + || true
+          mkdir -p .github/workflows
+          find .github/workflows -type f ! -name build-production-migration-snapshot.yml -delete
+
+          rsync -a --delete-excluded \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            --exclude='CNAME' \
+            /tmp/beta/ ./
+
+          # Safety: Beta deployment workflows and Beta CNAME must not enter the snapshot.
+          test ! -f CNAME
+          if find .github/workflows -type f ! -name build-production-migration-snapshot.yml | grep -q .; then
+            echo 'Unexpected workflow copied into snapshot' >&2
+            exit 1
+          fi
+
+          # The snapshot is intentionally non-deployable until Production Firebase web config is supplied.
+          cat > PRODUCTION_MIGRATION_LOCK.md <<'EOF'
+          # Production migration lock
+          This branch is a code snapshot only. Do not deploy it yet.
+          Beta CNAME and Beta GitHub Actions were intentionally excluded.
+          Firebase web config must be changed from bxh-arena-beta to the verified bxh-arena web-app config before release.
+          Tester/Beta account policy must be removed before release.
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Import Beta snapshot with production deployment lock"
+          git push --force-with-lease origin migration/beta-snapshot
