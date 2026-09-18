@@ -15,7 +15,7 @@ jobs:
         with:
           ref: migration/beta-snapshot
 
-      - name: Verify migration isolation and report residual Beta/test references
+      - name: Verify production migration safety
         shell: bash
         run: |
           set -euo pipefail
@@ -23,38 +23,23 @@ jobs:
           test -f firestore.rules
           test ! -f CNAME
 
-          echo "== Active runtime target audit =="
-          # Historical release notes, archived patches, and migration tooling may mention Beta.
-          # Only executable Firebase config is a deployment blocker here.
-          # Validate the actual firebaseConfig block rather than unrelated runtime guards.
-          python - <<'PY'
-          import re
-          from pathlib import Path
-          s = Path("index.html").read_text(encoding="utf-8")
-          blocks = re.findall(r'(?:const|let|var)\\s+(?:FIREBASE_CONFIG|firebaseConfig)\\s*=\\s*\\{.*?\\}', s, flags=re.S)
-          if not blocks:
-              raise SystemExit("FAIL: firebaseConfig block not found")
-          joined = "\\n".join(blocks)
-          if "bxh-arena-beta" in joined or "beta.bxh.com.tw" in joined:
-              raise SystemExit("FAIL: actual Firebase config still targets Beta")
-          if "bxh-arena" not in joined or "bxh-arena.firebaseapp.com" not in joined:
-              raise SystemExit("FAIL: Production Firebase config not verified")
-          print("PASS: actual firebaseConfig targets Production")
-          PYg still targets Beta." >&2
-            exit 1
-          fi
-
-          echo "== Firebase production target =="
+          echo "== Firebase Production config =="
           grep -nE 'projectId[[:space:]]*:[[:space:]]*["'\''"]bxh-arena["'\''"]' index.html
           grep -nE 'authDomain[[:space:]]*:[[:space:]]*["'\''"]bxh-arena\.firebaseapp\.com["'\''"]' index.html
 
-          echo "== Tester/test-account references for manual classification =="
-          grep -RIn --exclude-dir=.git -E 'tester|isTestAccount|testMode|測試|封測' . || true
+          echo "== Ensure no Beta values exist in Firebase config property lines =="
+          if grep -nE '^[[:space:]]*(apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId|measurementId)[[:space:]]*:' index.html | grep -E 'bxh-arena-beta|beta\.bxh\.com\.tw'; then
+            echo "FAIL: Firebase config property still targets Beta." >&2
+            exit 1
+          fi
 
-          echo "== Function/API endpoint references =="
-          grep -RIn --exclude-dir=.git -E 'cloudfunctions\.net|httpsCallable|connectFunctionsEmulator|getFunctions\(' . || true
+          echo "== Report Beta/test runtime guards for manual review =="
+          grep -nE 'bxh-arena-beta|tester|isTestAccount|testMode|測試|封測' index.html firestore.rules || true
 
-          echo "== Firebase service references =="
-          grep -RIn --exclude-dir=.git -E 'getDatabase\(|firebase/database|databaseURL|storageBucket|getStorage\(|firebase/storage' . || true
+          echo "== Report Function/API references =="
+          grep -nE 'cloudfunctions\.net|httpsCallable|connectFunctionsEmulator|getFunctions\(' index.html || true
 
-          echo "AUDIT_PASS: active Firebase config targets Production; historical Beta references are reported separately."
+          echo "== Report RTDB/Storage code references =="
+          grep -nE 'getDatabase\(|firebase/database|databaseURL|getStorage\(|firebase/storage' index.html || true
+
+          echo "AUDIT_PASS"
