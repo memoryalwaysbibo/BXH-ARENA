@@ -1,0 +1,93 @@
+name: Productionize Migration Snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  productionize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout migration snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: migration/beta-snapshot
+          fetch-depth: 0
+
+      - name: Patch Firebase web config and remove FINAL BETA account policy
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path("index.html")
+          s = p.read_text(encoding="utf-8")
+
+          values = {
+            "apiKey": "AIzaSyBdJhRYtsEKteWRTvjVmz01zP82H4AjmBM",
+            "authDomain": "bxh-arena.firebaseapp.com",
+            "projectId": "bxh-arena",
+            "storageBucket": "bxh-arena.firebasestorage.app",
+            "messagingSenderId": "87261141693",
+            "appId": "1:87261141693:web:acfaff5d0d53879e5335d4",
+            "measurementId": "G-4SX451ETV5",
+          }
+
+          for key, value in values.items():
+            pattern = rf'({re.escape(key)}\s*:\s*)["\'][^"\']*["\']'
+            s, n = re.subn(pattern, rf'\1"{value}"', s)
+            if key != "measurementId" and n < 1:
+              raise SystemExit(f"Firebase field not found: {key}")
+            print(f"{key}: {n} replacement(s)")
+
+          # Reverse the FINAL BETA signup policy only at the isolated test-account
+          # creation shapes. Never globally replace tester roles.
+          patterns = [
+            (r'(role\s*:\s*)["\']tester["\'](?=\s*,\s*active\s*:\s*true)', r'\1"player"'),
+            (r'(role\s*:\s*)["\']tester["\'](?=\s*,\s*isTestAccount\s*:\s*true)', r'\1"player"'),
+          ]
+          reverted = 0
+          for pattern, repl in patterns:
+            s, n = re.subn(pattern, repl, s)
+            reverted += n
+
+          # Production public signup must not mark new users as test accounts.
+          s, test_n = re.subn(
+            r'(role\s*:\s*["\']player["\']\s*,\s*)isTestAccount\s*:\s*true',
+            r'\1isTestAccount: false',
+            s
+          )
+
+          p.write_text(s, encoding="utf-8")
+          print(f"FINAL BETA role reversions={reverted}; test-account reversions={test_n}")
+
+      - name: Production safety checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -f CNAME
+          ! grep -q 'projectId:[[:space:]]*["'\''"]bxh-arena-beta' index.html
+          ! grep -q 'bxh-arena-beta.firebaseapp.com' index.html
+          grep -q 'projectId:[[:space:]]*["'\''"]bxh-arena["'\''"]' index.html
+          grep -q 'authDomain:[[:space:]]*["'\''"]bxh-arena.firebaseapp.com["'\''"]' index.html
+
+          # No Beta deployment workflow may exist on this branch.
+          if find .github/workflows -type f ! -name build-production-migration-snapshot.yml ! -name productionize-migration-snapshot.yml | grep -q .; then
+            echo "Unexpected workflow found" >&2
+            exit 1
+          fi
+
+      - name: Commit productionized snapshot
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "No productionization changes required."
+            exit 0
+          fi
+          git commit -m "Productionize Firebase web config and signup policy"
+          git push origin HEAD:migration/beta-snapshot
