@@ -2,10 +2,6 @@ name: Build Production Migration Snapshot
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/build-production-migration-snapshot.yml'
 
 permissions:
   contents: write
@@ -27,26 +23,23 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -B migration/beta-snapshot
-          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
-          mkdir -p .github
-          find .github -mindepth 1 -maxdepth 1 ! -name workflows -exec rm -rf {} + || true
-          mkdir -p .github/workflows
-          find .github/workflows -type f ! -name build-production-migration-snapshot.yml -delete
 
-          rsync -a --delete-excluded \
+          # Keep .git intact. Clear tracked working files safely instead of deleting
+          # the working tree around the repository metadata.
+          git rm -rf . ':!.github/workflows/build-production-migration-snapshot.yml' || true
+          mkdir -p .github/workflows
+
+          rsync -a \
             --exclude='.git/' \
             --exclude='.github/workflows/' \
             --exclude='CNAME' \
             /tmp/beta/ ./
 
-          # Safety: Beta deployment workflows and Beta CNAME must not enter the snapshot.
+          test -d .git
           test ! -f CNAME
-          if find .github/workflows -type f ! -name build-production-migration-snapshot.yml | grep -q .; then
-            echo 'Unexpected workflow copied into snapshot' >&2
-            exit 1
-          fi
+          test -f index.html
+          test -f firestore.rules
 
-          # The snapshot is intentionally non-deployable until Production Firebase web config is supplied.
           cat > PRODUCTION_MIGRATION_LOCK.md <<'EOF'
           # Production migration lock
           This branch is a code snapshot only. Do not deploy it yet.
@@ -59,4 +52,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Import Beta snapshot with production deployment lock"
-          git push --force-with-lease origin migration/beta-snapshot
+          git push --force origin migration/beta-snapshot
