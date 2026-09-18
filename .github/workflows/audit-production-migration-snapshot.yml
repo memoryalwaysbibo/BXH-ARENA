@@ -26,8 +26,21 @@ jobs:
           echo "== Active runtime target audit =="
           # Historical release notes, archived patches, and migration tooling may mention Beta.
           # Only executable Firebase config is a deployment blocker here.
-          if grep -nE 'apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId' index.html | grep -E 'bxh-arena-beta|beta\\.bxh\\.com\\.tw'; then
-            echo "FAIL: active Firebase config still targets Beta." >&2
+          # Validate the actual firebaseConfig block rather than unrelated runtime guards.
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          s = Path("index.html").read_text(encoding="utf-8")
+          blocks = re.findall(r'(?:const|let|var)\\s+(?:FIREBASE_CONFIG|firebaseConfig)\\s*=\\s*\\{.*?\\}', s, flags=re.S)
+          if not blocks:
+              raise SystemExit("FAIL: firebaseConfig block not found")
+          joined = "\\n".join(blocks)
+          if "bxh-arena-beta" in joined or "beta.bxh.com.tw" in joined:
+              raise SystemExit("FAIL: actual Firebase config still targets Beta")
+          if "bxh-arena" not in joined or "bxh-arena.firebaseapp.com" not in joined:
+              raise SystemExit("FAIL: Production Firebase config not verified")
+          print("PASS: actual firebaseConfig targets Production")
+          PYg still targets Beta." >&2
             exit 1
           fi
 
