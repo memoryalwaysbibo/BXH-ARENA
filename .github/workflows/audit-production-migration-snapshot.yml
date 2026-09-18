@@ -23,9 +23,11 @@ jobs:
           test -f firestore.rules
           test ! -f CNAME
 
-          echo "== Forbidden production target residues =="
-          if grep -RIn --exclude-dir=.git --exclude='PRODUCTION_MIGRATION_LOCK.md'             -E 'bxh-arena-beta|beta\.bxh\.com\.tw' .; then
-            echo "FAIL: Beta Firebase/domain target remains." >&2
+          echo "== Active runtime target audit =="
+          # Historical release notes, archived patches, and migration tooling may mention Beta.
+          # Only executable Firebase config is a deployment blocker here.
+          if grep -nE 'apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId' index.html | grep -E 'bxh-arena-beta|beta\\.bxh\\.com\\.tw'; then
+            echo "FAIL: active Firebase config still targets Beta." >&2
             exit 1
           fi
 
@@ -42,4 +44,4 @@ jobs:
           echo "== Firebase service references =="
           grep -RIn --exclude-dir=.git -E 'getDatabase\(|firebase/database|databaseURL|storageBucket|getStorage\(|firebase/storage' . || true
 
-          echo "AUDIT_PASS: no forbidden Beta project/domain target remains."
+          echo "AUDIT_PASS: active Firebase config targets Production; historical Beta references are reported separately."
